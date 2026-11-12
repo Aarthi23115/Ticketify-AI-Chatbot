@@ -1,0 +1,129 @@
+{% extends 'base.html' %}
+
+{% block title %}Ticket Scan - Ticketify{% endblock %}
+
+{% block content %}
+<div class="container my-5">
+    <div class="row justify-content-center">
+        <div class="col-md-7">
+            <div class="card">
+                <div class="card-body p-4 p-md-5">
+                    <div class="text-center mb-4">
+                        <i class="bi bi-qr-code-scan" style="font-size: 3.5rem; color: var(--primary-color);"></i>
+                        <h1 class="h2 fw-bold mt-3">Ticket Scan</h1>
+                    </div>
+
+                    {% if scan_status == 'valid' %}
+                    <div id="scan-status" class="alert {% if can_validate %}alert-info{% else %}alert-warning{% endif %}" role="status" aria-live="polite">
+                        {% if can_validate %}
+                            Valid QR code. Checking this ticket in...
+                        {% else %}
+                            Valid QR code — NOT CHECKED IN.
+                        {% endif %}
+                    </div>
+                    {% elif scan_status == 'expired' %}
+                    <div id="scan-status" class="alert alert-danger" role="status" aria-live="polite">
+                        QR Code Expired. Please Scan the Latest QR Code.
+                    </div>
+                    {% elif scan_status == 'used' %}
+                    <div id="scan-status" class="alert alert-warning" role="status" aria-live="polite">
+                        ALREADY USED
+                    </div>
+                    {% elif scan_status == 'cancelled' %}
+                    <div id="scan-status" class="alert alert-danger" role="status" aria-live="polite">
+                        Ticket Cancelled.
+                    </div>
+                    {% else %}
+                    <div id="scan-status" class="alert alert-danger" role="status" aria-live="polite">
+                        Invalid QR code.
+                    </div>
+                    {% endif %}
+
+                    {% if ticket %}
+                    <div class="border rounded p-3">
+                        <h2 class="h5 fw-bold mb-3">{{ ticket.event.title }}</h2>
+                        <p><strong>Ticket ID:</strong> {{ ticket.ticket_id }}</p>
+                        <p><strong>Booking ID:</strong> {{ ticket.booking.booking_id }}</p>
+                        <p><strong>Attendee:</strong> {{ ticket.attendee_name }}</p>
+                        <p><strong>Ticket status:</strong> {{ ticket.get_status_display }}</p>
+                        <p><strong>Tickets booked:</strong> {{ ticket.booking.quantity }}</p>
+                        <p class="mb-0"><strong>Tickets available:</strong>
+                            {% if ticket.booking.show_time %}
+                                {{ ticket.booking.show_time.available_tickets }}
+                            {% else %}
+                                {{ ticket.event.available_tickets }}
+                            {% endif %}
+                        </p>
+                    </div>
+                    {% endif %}
+
+                    {% if scan_status == 'valid' and not can_validate %}
+                    <div class="alert alert-secondary mt-3 mb-0">
+                        <p class="mb-2">
+                            This page only checks the QR signature and expiry. The ticket is still unused. An authenticated organizer must check it in before its status changes.
+                        </p>
+                        {% if organizer_login_url %}
+                        <a class="btn btn-primary btn-sm" href="{{ organizer_login_url }}">
+                            Sign in as the event organizer to check in
+                        </a>
+                        {% elif request.user.is_authenticated %}
+                        <p class="small mb-0">
+                            Your signed-in account is not authorized to scan this event. Sign in as its organizer or a site superuser.
+                        </p>
+                        {% endif %}
+                    </div>
+                    {% endif %}
+
+                    {% if can_validate %}
+                    <form id="qr-validation-csrf" class="d-none">{% csrf_token %}</form>
+                    {{ token|json_script:"scanned-qr-token" }}
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% if can_validate %}
+<script>
+(function () {
+    const statusBox = document.getElementById('scan-status');
+    const csrfToken = document.querySelector('[name=csrfmiddlewaretoken]').value;
+    const token = JSON.parse(document.getElementById('scanned-qr-token').textContent);
+    statusBox.textContent = 'Validating ticket...';
+    statusBox.className = 'alert alert-info';
+
+    fetch("{% url 'api_qr_validate' %}", {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': csrfToken
+        },
+        body: JSON.stringify({token: token, device_info: navigator.userAgent})
+    })
+    .then(function (response) {
+        return response.json().then(function (data) {
+            return {ok: response.ok, data: data};
+        });
+    })
+    .then(function (result) {
+        statusBox.textContent = result.data.detail || 'Unable to validate this ticket.';
+        statusBox.className = result.ok ? 'alert alert-success' :
+            (result.data.detail === 'ALREADY USED' || result.data.detail === 'Ticket Already Used.'
+                ? 'alert alert-warning' : 'alert alert-danger');
+        if (result.data.ticket) {
+            const ticketStatus = document.querySelector('.border.rounded p:last-child');
+            if (ticketStatus) {
+                ticketStatus.textContent = 'Ticket status: ' + result.data.ticket.ticket_status;
+            }
+        }
+    })
+    .catch(function () {
+        statusBox.textContent = 'Unable to contact the ticket validation service. Please try again.';
+        statusBox.className = 'alert alert-danger';
+    });
+})();
+</script>
+{% endif %}
+{% endblock %}
